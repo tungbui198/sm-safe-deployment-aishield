@@ -1,0 +1,103 @@
+#!/usr/bin/env python
+
+# Data folder structure
+# training_data
+# - train
+#     - audio_files
+#     - medical_condition.csv
+#     - metadata.csv
+# - test
+#     - audio_files
+#     - results.csv
+
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from sklearn.model_selection import StratifiedKFold
+
+from .utils import logger, list_dir
+from .model import define_model
+
+FORM_DATA_CONTENT_TYPE = "multipart/form-data"
+
+
+class TrainConfig:
+    ROOT_DIR = Path("/opt/ml")
+
+    IN_PARAM_JSON = ROOT_DIR / "input/config/hyperparameters.json"
+
+    INPUT_DATA_DIR = ROOT_DIR / "input/data"
+    IN_TRAIN_CSV = INPUT_DATA_DIR / "train.csv"
+
+    OUT_MODEL_DIR = ROOT_DIR / "models"
+    OUT_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def inspect_input():
+    logger.info(f"Start inspect_input")
+    files = list_dir(TrainConfig.INPUT_DATA_DIR)
+    logger.info(f"{TrainConfig.INPUT_DATA_DIR.as_posix()}: {files}")
+
+
+def train(epochs=50, batch_size=50, learning_rate=0.00001):
+    logger.info(f"Start training ...")
+
+    train_df = pd.read_csv(TrainConfig.IN_TRAIN_CSV)
+    X = train_df.drop(['label'], axis=1).values.reshape(
+        train_df.shape[0], 13, -1)
+    y = train_df['label'].values
+
+    skf = StratifiedKFold(n_splits=5, random_state=42, shuffle=True)
+    fold = 1
+    for train_index, val_index in skf.split(X, y):
+        try:
+            X_train = X[train_index]
+            X_validation = X[val_index]
+            y_train = y[train_index]
+            y_validation = y[val_index]
+            X_train = X_train[..., np.newaxis]
+            X_validation = X_validation[..., np.newaxis]
+
+            model = define_model()
+            optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+            model.compile(optimizer=optimizer,
+                          loss='binary_crossentropy',
+                          metrics=['accuracy'])
+
+            model.fit(X_train, y_train, validation_data=(
+                X_validation, y_validation), batch_size=batch_size, epochs=epochs)
+
+            model_path = str(TrainConfig.OUT_MODEL_DIR /
+                             f"model-kfold-{fold}.h5")
+            model.save_weights(model_path)
+            fold += 1
+        except Exception as e:
+            logger.error(f"Error at fold={fold}: {e}")
+
+
+def inspect_output():
+    logger.info(f"Start inspect_output")
+    files = list_dir(TrainConfig.OUT_MODEL_DIR)
+    logger.info(f"{TrainConfig.OUT_MODEL_DIR.as_posix()}: {files}")
+
+
+if __name__ == "__main__":
+    params = {}
+    if TrainConfig.IN_PARAM_JSON.exists():
+        with open(TrainConfig.IN_PARAM_JSON.as_posix(), "r") as tc:
+            params = json.load(tc)
+    logger.info(f"params: {params}")
+
+    args = {}
+    learning_rate = params.get("learning_rate", None)
+    if learning_rate is not None:
+        args["learning_rate"] = float(learning_rate)
+
+    inspect_input()
+    train(**args)
+    inspect_output()
+    sys.exit(0)

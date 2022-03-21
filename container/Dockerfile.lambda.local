@@ -1,0 +1,16 @@
+FROM public.ecr.aws/lambda/python:3.8-x86_64
+
+RUN pip3 --no-cache-dir install \
+    numpy==1.19.5 \
+    pandas==1.1.5 \
+    joblib==1.0.1
+
+RUN pip3 --no-cache-dir install \
+    librosa==0.8.1 \
+    aiofiles==0.7.0 \
+    pydub==0.25.1
+
+COPY code/utils.py ${LAMBDA_TASK_ROOT}
+COPY code/lambda_handler.py ${LAMBDA_TASK_ROOT}
+
+CMD [ "lambda_handler.lambda_handler" ]
